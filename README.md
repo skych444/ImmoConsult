@@ -30,6 +30,30 @@ responsive et riche en filtres.
 - **Architecture d'adaptateurs** : chaque source est un module isolé, facile à
   brancher ou débrancher.
 
+### 🚀 Ce qu'aucun portail classique ne fait
+
+Les portails vivent des agences et des vendeurs ; ImmoConsult est du côté de
+l'**acheteur** :
+
+- **Coût réel total** (pas le prix affiché) : notaire, taxe foncière, charges,
+  **facture énergie déduite du DPE**, coût de possession sur 10 ans, et un
+  **simulateur de crédit** (apport / durée / taux) en direct.
+- **Score de négociabilité** : marge de baisse probable (ancienneté, baisses
+  déjà appliquées, surévaluation vs marché).
+- **Risques & qualité de vie hyperlocaux** : inondation, argiles, radon,
+  sismique, pollution + bruit, air, écoles, commerces, transports, fibre →
+  score /100.
+- **Investissement** : loyer estimé, **rendement brut/net**, tendance du
+  quartier, timing de marché.
+- **Transparence copropriété** : lots, impayés, fonds travaux, procédures.
+- **Alerte légale DPE** : « interdit à la location en 2028 » (passoires
+  thermiques).
+- **Détecteur d'anomalies / arnaques** : prix trop beau, DPE manquant, etc.
+- **Recherche en langage naturel** : « appartement 3 pièces à Lyon avec
+  terrasse moins de 500k » → filtres automatiques.
+- **Recherche par temps de trajet** (isochrones), y compris **multi-points**.
+- **Comparateur** de biens côte à côte (12 critères) + **notes** de visite.
+
 ---
 
 ## ⚖️ Sources de données — à lire avant tout
@@ -126,6 +150,26 @@ annonces.
   10 min) pour éviter de re-solliciter les sources. En production, ce cache se
   double d'un cache serveur (Redis/KV) devant les API partenaires.
 
+### 🧠 Analyses « acheteur » & sources de données réelles
+
+Chaque bien est enrichi en une passe par `assets/js/insights.js`, qui appelle
+des modules indépendants. Tous fonctionnent sur des barèmes/valeurs de
+**démonstration** ; voici où brancher les données réelles :
+
+| Module | Fait | Donnée réelle à brancher |
+| --- | --- | --- |
+| `cost.js` | Notaire, taxe foncière, charges, énergie (DPE), coût 10 ans, **crédit** | Barèmes locaux ; DPE réel de l'annonce |
+| `negotiation.js` | Marge de négociation | Historique de prix réel (suivi des annonces dans le temps) |
+| `risks.js` | Inondation, argiles, radon, sismique, bruit, air, écoles, fibre | **Géorisques**, **Bruitparif**, **Atmo**, annuaire écoles, **ARCEP** |
+| `invest.js` | Rendement locatif, tendance, timing | Observatoires des loyers (open data) |
+| `copro.js` | Lots, impayés, fonds travaux, procédures | Registre national des copropriétés (open data) |
+| `legal.js` | Interdiction DPE (2025/2028/2034) | Loi Climat & Résilience (règles intégrées) |
+| `commute.js` | Temps de trajet (vol d'oiseau × facteur) | API d'isochrones **IGN / OpenRouteService / Mapbox** |
+| `search-nlp.js` | Analyse de la requête (règles) | Optionnel : un LLM via proxy renvoyant le même objet de filtres |
+
+Chaque module renvoie un objet simple et testable ; remplacer la source de
+données ne touche ni l'affichage ni le reste de l'application.
+
 ---
 
 ## 🚀 Déploiement sur GitHub Pages
@@ -162,6 +206,17 @@ assets/js/estimator.js        Estimation de prix (référence marché / DVF)
 assets/js/dedupe.js           Déduplication multi-portails
 assets/js/cache.js            Cache client des annonces (TTL)
 assets/js/alerts.js           Alertes / recherches sauvegardées
+assets/js/insights.js         Agrégateur d'analyses par bien
+assets/js/cost.js             Coût réel total + simulateur de crédit
+assets/js/negotiation.js      Score de négociabilité
+assets/js/risks.js            Risques & qualité de vie (Géorisques…)
+assets/js/legal.js            Calendrier d'interdiction DPE
+assets/js/copro.js            Transparence copropriété
+assets/js/invest.js           Rendement locatif & timing marché
+assets/js/anomaly.js          Détecteur d'anomalies / arnaques
+assets/js/commute.js          Recherche par temps de trajet (isochrones)
+assets/js/search-nlp.js       Recherche en langage naturel
+assets/js/util.js             Utilitaires (hash, RNG, crédit, distance)
 assets/js/sources/            Adaptateurs de sources (registre + démo)
 assets/vendor/leaflet/        Leaflet embarqué (carte interactive)
 .github/workflows/deploy.yml  Déploiement GitHub Pages

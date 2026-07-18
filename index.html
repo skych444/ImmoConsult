@@ -105,6 +105,22 @@
         <div id="energyFilters" class="energy-row"></div>
       </fieldset>
 
+      <fieldset class="fs">
+        <legend>Temps de trajet (isochrone)</legend>
+        <div class="commute-form">
+          <select id="commutePlace" aria-label="Ville de référence"></select>
+          <div class="commute-row">
+            <select id="commuteMode" aria-label="Mode de transport"></select>
+            <input id="commuteMin" type="number" min="5" max="120" step="5" value="30" aria-label="Minutes" />
+            <span>min</span>
+            <button id="commuteAdd" class="btn sm" type="button">Ajouter</button>
+          </div>
+          <p id="commuteMsg" class="alert-msg"></p>
+          <div id="commuteList" class="commute-list"></div>
+          <p class="muted small">Cumulez plusieurs points : seuls les biens accessibles de <b>chacun</b> restent affichés.</p>
+        </div>
+      </fieldset>
+
       <button id="resetBtn" class="btn ghost block">Réinitialiser</button>
     </aside>
 
@@ -123,6 +139,9 @@
               <option value="price-desc">Prix décroissant</option>
               <option value="surface">Surface</option>
               <option value="ppm2">Prix au m²</option>
+              <option value="yield">Rendement locatif</option>
+              <option value="nego">Négociabilité</option>
+              <option value="livability">Qualité de vie</option>
             </select>
           </label>
           <div class="views" role="group" aria-label="Affichage">
@@ -132,6 +151,8 @@
           </div>
         </div>
       </div>
+
+      <div id="nlChips" class="nl-chips" hidden></div>
 
       <section id="results" class="results" aria-live="polite"></section>
       <section id="map" class="map" hidden></section>
@@ -175,6 +196,22 @@
       </div>
       <p id="alertMsg" class="alert-msg"></p>
       <div id="alertList" class="alert-list"></div>
+    </div>
+  </dialog>
+
+  <!-- ------------------------------------------------------------ -->
+  <!--  Comparateur                                                  -->
+  <!-- ------------------------------------------------------------ -->
+  <div id="compareBar" class="compare-bar" hidden>
+    <span>⇄ <b id="compareCount">0</b> bien(s) à comparer</span>
+    <button id="compareOpen" class="btn primary sm">Comparer</button>
+  </div>
+
+  <dialog id="compare" class="modal wide">
+    <button id="compareClose" class="detail-close" aria-label="Fermer">✕</button>
+    <div class="modal-body">
+      <h2>⇄ Comparateur</h2>
+      <div id="compareBody"></div>
     </div>
   </dialog>
 

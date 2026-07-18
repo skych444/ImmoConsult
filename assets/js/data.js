@@ -186,3 +186,4 @@ export const DEMO_LISTINGS = buildListings(48);
 
 export const COUNTRIES = [...new Set(CITIES.map((c) => c.country))].sort();
 export const CITY_NAMES = [...new Set(CITIES.map((c) => c.city))].sort();
+export const CITY_COORDS = Object.fromEntries(CITIES.map((c) => [c.city, { lat: c.lat, lng: c.lng }]));
