@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="description" content="ImmoConsult — agrégateur de biens immobiliers en vente et location sur plusieurs portails, avec filtres avancés." />
+  <title>ImmoConsult · Recherche immobilière multi-sources</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%234f46e5' d='M12 3 3 10v11h6v-6h6v6h6V10z'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 3 3 10v11h6v-6h6v6h6V10z"/></svg>
+      </span>
+      <div>
+        <h1>ImmoConsult</h1>
+        <p class="tagline">Tous les biens, plusieurs sources, un seul écran</p>
+      </div>
+    </div>
+
+    <div class="topbar-search">
+      <input id="search" type="search" list="cityList" placeholder="Ville, pays, mot-clé…" aria-label="Recherche" />
+      <datalist id="cityList"></datalist>
+    </div>
+
+    <div class="topbar-actions">
+      <select id="currency" aria-label="Devise"></select>
+      <button id="favToggle" class="icon-btn" title="Mes favoris">♥ <span id="favCount" class="count"></span></button>
+      <button id="themeBtn" class="icon-btn" title="Thème clair/sombre">🌙</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- ------------------------------------------------------------ -->
+    <!--  Panneau de filtres                                          -->
+    <!-- ------------------------------------------------------------ -->
+    <div id="backdrop" class="backdrop"></div>
+    <aside id="filters" class="filters" aria-label="Filtres de recherche">
+      <div class="filters-head">
+        <h2>Filtres</h2>
+        <button id="closeDrawer" class="icon-btn drawer-only" aria-label="Fermer">✕</button>
+      </div>
+
+      <fieldset class="fs">
+        <legend>Transaction</legend>
+        <div class="segmented">
+          <label><input type="radio" name="transaction" value="all" checked><span>Tout</span></label>
+          <label><input type="radio" name="transaction" value="buy"><span>Acheter</span></label>
+          <label><input type="radio" name="transaction" value="rent"><span>Louer</span></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fs">
+        <legend>Prix (dans la devise choisie)</legend>
+        <div class="range">
+          <input id="priceMin" type="number" min="0" inputmode="numeric" placeholder="Min" />
+          <span>—</span>
+          <input id="priceMax" type="number" min="0" inputmode="numeric" placeholder="Max" />
+        </div>
+      </fieldset>
+
+      <fieldset class="fs">
+        <legend>Surface (m²)</legend>
+        <div class="range">
+          <input id="surfaceMin" type="number" min="0" inputmode="numeric" placeholder="Min" />
+          <span>—</span>
+          <input id="surfaceMax" type="number" min="0" inputmode="numeric" placeholder="Max" />
+        </div>
+      </fieldset>
+
+      <fieldset class="fs">
+        <legend>Pièces &amp; chambres (minimum)</legend>
+        <div class="two">
+          <label class="lbl">Pièces
+            <select id="rooms"><option value="0">Indiff.</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+          </label>
+          <label class="lbl">Chambres
+            <select id="bedrooms"><option value="0">Indiff.</option><option>1</option><option>2</option><option>3</option><option>4</option></select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fs">
+        <legend>Type de bien</legend>
+        <div id="typeFilters" class="checks"></div>
+      </fieldset>
+
+      <fieldset class="fs">
+        <legend>Pays</legend>
+        <div id="countryFilters" class="checks scroll"></div>
+      </fieldset>
+
+      <fieldset class="fs">
+        <legend>Équipements</legend>
+        <div id="featureFilters" class="checks"></div>
+      </fieldset>
+
+      <fieldset class="fs">
+        <legend>Classe énergie (DPE)</legend>
+        <div id="energyFilters" class="energy-row"></div>
+      </fieldset>
+
+      <button id="resetBtn" class="btn ghost block">Réinitialiser</button>
+    </aside>
+
+    <!-- ------------------------------------------------------------ -->
+    <!--  Résultats                                                   -->
+    <!-- ------------------------------------------------------------ -->
+    <main class="content">
+      <div class="toolbar">
+        <button id="filterToggle" class="btn ghost drawer-only">⚙︎ Filtres</button>
+        <span id="resultCount" class="result-count">…</span>
+        <div class="toolbar-right">
+          <label class="lbl inline">Trier
+            <select id="sort">
+              <option value="recent">Plus récents</option>
+              <option value="price-asc">Prix croissant</option>
+              <option value="price-desc">Prix décroissant</option>
+              <option value="surface">Surface</option>
+              <option value="ppm2">Prix au m²</option>
+            </select>
+          </label>
+          <div class="views" role="group" aria-label="Affichage">
+            <button class="view-btn on" data-view="grid" title="Grille">▦</button>
+            <button class="view-btn" data-view="list" title="Liste">☰</button>
+            <button class="view-btn" data-view="map" title="Carte">◎</button>
+          </div>
+        </div>
+      </div>
+
+      <section id="results" class="results" aria-live="polite"></section>
+      <section id="map" class="map" hidden></section>
+
+      <button id="loadMore" class="btn block" hidden>Afficher plus de biens</button>
+
+      <footer class="footer">
+        <p>
+          <strong>Démonstration.</strong> Les annonces affichées sont fictives.
+          ImmoConsult est conçu pour agréger des sources <em>autorisées</em>
+          (API partenaires, flux publics, open data). Voir le README.
+        </p>
+      </footer>
+    </main>
+  </div>
+
+  <!-- ------------------------------------------------------------ -->
+  <!--  Fiche détail                                                -->
+  <!-- ------------------------------------------------------------ -->
+  <dialog id="detail" class="detail">
+    <button id="detailClose" class="detail-close" aria-label="Fermer">✕</button>
+    <div id="detailBody" class="detail-body"></div>
+  </dialog>
+
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>
