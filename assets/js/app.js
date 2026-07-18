@@ -2,6 +2,11 @@ import {
   CURRENCIES, PROPERTY_TYPES, FEATURES, COUNTRIES, CITY_NAMES,
 } from './data.js';
 import { fetchAllListings } from './sources/index.js';
+import { getListings } from './cache.js';
+import { dedupe } from './dedupe.js';
+import { estimate } from './estimator.js';
+import { listingMatches, describeFilters } from './filters.js';
+import { loadAlerts, addAlert, removeAlert, updateAlert, deliverAlert } from './alerts.js';
 
 /* ------------------------------------------------------------------ *
  *  État
@@ -26,23 +31,41 @@ function defaultFilters() {
   };
 }
 
+/** Convertit les filtres UI en objet normalisé (bornes de prix en EUR). */
+function normalizeFilters(f) {
+  const rate = CURRENCIES[state.currency].rate;
+  return {
+    q: f.q.trim().toLowerCase(),
+    transaction: f.transaction,
+    types: [...f.types], countries: [...f.countries],
+    features: [...f.features], energy: [...f.energy],
+    priceMinEUR: f.priceMin == null ? null : f.priceMin / rate,
+    priceMaxEUR: f.priceMax == null ? null : f.priceMax / rate,
+    surfaceMin: f.surfaceMin, surfaceMax: f.surfaceMax,
+    rooms: f.rooms, bedrooms: f.bedrooms, favoritesOnly: f.favoritesOnly,
+  };
+}
+
 /* ------------------------------------------------------------------ *
  *  Utilitaires
  * ------------------------------------------------------------------ */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
-function toCurrency(eur) {
-  const c = CURRENCIES[state.currency];
-  return eur * c.rate;
-}
+const toCurrency = (eur) => eur * CURRENCIES[state.currency].rate;
 
 function formatPrice(eur, transaction) {
   const c = CURRENCIES[state.currency];
-  const val = toCurrency(eur);
-  const str = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(val));
-  const suffix = transaction === 'rent' ? '/mois' : '';
-  return `${str} ${c.symbol}${suffix}`;
+  const str = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(toCurrency(eur)));
+  return `${str} ${c.symbol}${transaction === 'rent' ? '/mois' : ''}`;
+}
+
+function shortPrice(eur) {
+  const v = toCurrency(eur);
+  const s = CURRENCIES[state.currency].symbol;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1).replace('.0', '')}M${s}`;
+  if (v >= 1e3) return `${Math.round(v / 1e3)}k${s}`;
+  return `${Math.round(v)}${s}`;
 }
 
 function formatDate(iso) {
@@ -53,7 +76,6 @@ function formatDate(iso) {
   return `il y a ${Math.round(d / 30)} mois`;
 }
 
-/** Image placeholder SVG (data URI) — évite toute ressource externe. */
 function propertyImage(item, w = 640, h = 420) {
   const h1 = item.hue;
   const h2 = (item.hue + 40) % 360;
@@ -76,42 +98,27 @@ const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 
+function estimateChip(it) {
+  const est = estimate(it);
+  if (!est) return '';
+  const sign = est.deltaPct > 0 ? '+' : '';
+  const label = est.verdict === 'below' ? 'sous le marché'
+    : est.verdict === 'above' ? 'au-dessus' : 'dans le marché';
+  return `<span class="est ${est.verdict}" title="Réf. marché ${est.refPerM2.toLocaleString('fr-FR')} €/m²">${sign}${est.deltaPct}% · ${label}</span>`;
+}
+
 /* ------------------------------------------------------------------ *
  *  Filtrage + tri
  * ------------------------------------------------------------------ */
 function applyFilters() {
+  const nf = normalizeFilters(state.filters);
+  state.filtered = state.all.filter((it) => listingMatches(it, nf, state.favorites));
+
   const f = state.filters;
-  const q = f.q.trim().toLowerCase();
-
-  state.filtered = state.all.filter((it) => {
-    if (f.favoritesOnly && !state.favorites.has(it.id)) return false;
-    if (f.transaction !== 'all' && it.transaction !== f.transaction) return false;
-    if (f.types.size && !f.types.has(it.type)) return false;
-    if (f.countries.size && !f.countries.has(it.country)) return false;
-    if (f.rooms && it.rooms < f.rooms) return false;
-    if (f.bedrooms && it.bedrooms < f.bedrooms) return false;
-
-    const price = toCurrency(it.priceEUR);
-    if (f.priceMin != null && price < f.priceMin) return false;
-    if (f.priceMax != null && price > f.priceMax) return false;
-    if (f.surfaceMin != null && it.surface < f.surfaceMin) return false;
-    if (f.surfaceMax != null && it.surface > f.surfaceMax) return false;
-
-    if (f.features.size && ![...f.features].every((x) => it.features.includes(x))) return false;
-    if (f.energy.size && !f.energy.has(it.energy)) return false;
-
-    if (q) {
-      const hay = `${it.title} ${it.city} ${it.country} ${it.address} ${it.source}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-
-  const dir = { 'price-asc': 1, 'price-desc': -1 };
   state.filtered.sort((a, b) => {
     switch (f.sort) {
-      case 'price-asc': return (a.priceEUR - b.priceEUR) * dir['price-asc'];
-      case 'price-desc': return (a.priceEUR - b.priceEUR) * dir['price-desc'];
+      case 'price-asc': return a.priceEUR - b.priceEUR;
+      case 'price-desc': return b.priceEUR - a.priceEUR;
       case 'surface': return b.surface - a.surface;
       case 'ppm2': return (a.priceEUR / a.surface) - (b.priceEUR / b.surface);
       default: return new Date(b.createdAt) - new Date(a.createdAt);
@@ -126,14 +133,13 @@ function applyFilters() {
  *  Rendu
  * ------------------------------------------------------------------ */
 function render() {
-  const results = $('#results');
   const count = state.filtered.length;
-  $('#resultCount').textContent = count
-    ? `${count} bien${count > 1 ? 's' : ''}`
-    : 'Aucun résultat';
+  $('#resultCount').textContent = count ? `${count} bien${count > 1 ? 's' : ''}` : 'Aucun résultat';
 
+  if (state.view === 'map') { $('#loadMore').hidden = true; updateMap(); return; }
+
+  const results = $('#results');
   results.classList.toggle('list', state.view === 'list');
-  results.classList.toggle('map-hidden', true);
 
   if (!count) {
     results.innerHTML = `<div class="empty-state">
@@ -142,18 +148,16 @@ function render() {
     </div>`;
     $('#clearFromEmpty').onclick = resetFilters;
     $('#loadMore').hidden = true;
-    renderMap();
     return;
   }
 
   const shown = state.filtered.slice(0, state.page * state.perPage);
   results.innerHTML = shown.map(cardHtml).join('');
-  $$('.card').forEach((el) => {
+  $$('.card', results).forEach((el) => {
     el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleFav(el.dataset.id); };
     el.onclick = () => openDetail(el.dataset.id);
   });
   $('#loadMore').hidden = shown.length >= count;
-  renderMap();
 }
 
 function cardHtml(it) {
@@ -161,19 +165,23 @@ function cardHtml(it) {
   const feats = it.features.slice(0, 3).map((k) => `<span class="chip">${FEATURES[k]}</span>`).join('');
   const badge = it.transaction === 'rent' ? 'Location' : 'Vente';
   const energy = it.energy ? `<span class="energy e-${it.energy}">${it.energy}</span>` : '';
+  const sourceTag = it.sourcesCount > 1
+    ? `<span class="source-tag multi">Vu sur ${it.sourcesCount} sites</span>`
+    : `<span class="source-tag">${escapeHtml(it.source)}</span>`;
   return `
   <article class="card" data-id="${it.id}" tabindex="0">
     <div class="card-media">
       <img loading="lazy" src="${propertyImage(it)}" alt="${escapeHtml(it.title)}" />
       <span class="badge ${it.transaction}">${badge}</span>
       <button class="fav ${fav ? 'on' : ''}" aria-label="Favori" title="Ajouter aux favoris">${fav ? '♥' : '♡'}</button>
-      <span class="source-tag">${escapeHtml(it.source)}</span>
+      ${sourceTag}
     </div>
     <div class="card-body">
       <div class="price-row">
         <strong class="price">${formatPrice(it.priceEUR, it.transaction)}</strong>
         ${energy}
       </div>
+      ${estimateChip(it)}
       <h3 class="card-title">${escapeHtml(PROPERTY_TYPES[it.type])} · ${escapeHtml(it.city)}</h3>
       <p class="card-loc">${escapeHtml(it.address)}, ${escapeHtml(it.country)}</p>
       <ul class="specs">
@@ -188,21 +196,57 @@ function cardHtml(it) {
   </article>`;
 }
 
-/* ---- Mini-carte schématique (sans dépendance, hors ligne) --------- */
-function renderMap() {
+/* ------------------------------------------------------------------ *
+ *  Carte interactive (Leaflet) + repli schématique
+ * ------------------------------------------------------------------ */
+let _map = null;
+let _markers = null;
+
+function ensureMap() {
+  if (_map || !window.L) return _map;
+  _map = window.L.map('map', { scrollWheelZoom: true }).setView([46, 5], 4);
+  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap',
+  }).addTo(_map);
+  _markers = window.L.layerGroup().addTo(_map);
+  return _map;
+}
+
+function updateMap() {
+  if (!window.L) { renderSchematicMap(); return; }
+  const m = ensureMap();
+  setTimeout(() => m.invalidateSize(), 0);
+  _markers.clearLayers();
+  const pts = state.filtered;
+  if (!pts.length) return;
+  const bounds = [];
+  pts.slice(0, 300).forEach((p) => {
+    const icon = window.L.divIcon({
+      className: 'ir-pin-wrap',
+      html: `<span class="ir-pin ${p.transaction}">${shortPrice(p.priceEUR)}</span>`,
+      iconSize: [56, 24],
+      iconAnchor: [28, 24],
+    });
+    const mk = window.L.marker([p.lat, p.lng], { icon }).addTo(_markers);
+    mk.on('click', () => openDetail(p.id));
+    bounds.push([p.lat, p.lng]);
+  });
+  m.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+}
+
+/** Repli si Leaflet indisponible (ex. hors ligne). */
+function renderSchematicMap() {
   const wrap = $('#map');
-  if (!wrap || wrap.hidden) return;
   const pts = state.filtered;
   if (!pts.length) { wrap.innerHTML = '<p class="map-empty">Aucun bien à localiser.</p>'; return; }
-  const lats = pts.map((p) => p.lat), lngs = pts.map((p) => p.lng);
-  const minLa = Math.min(...lats), maxLa = Math.max(...lats);
-  const minLn = Math.min(...lngs), maxLn = Math.max(...lngs);
-  const nx = (v) => maxLn === minLn ? 50 : 6 + ((v - minLn) / (maxLn - minLn)) * 88;
-  const ny = (v) => maxLa === minLa ? 50 : 6 + ((maxLa - v) / (maxLa - minLa)) * 88;
-  const pins = pts.slice(0, 200).map((p) => `
-    <button class="pin" style="left:${nx(p.lng)}%;top:${ny(p.lat)}%" data-id="${p.id}"
-      title="${escapeHtml(p.city)} — ${formatPrice(p.priceEUR, p.transaction)}"></button>`).join('');
-  wrap.innerHTML = `<div class="map-canvas">${pins}<span class="map-note">Aperçu schématique — brancher Leaflet/Mapbox pour une vraie carte</span></div>`;
+  const lats = pts.map((p) => p.lat); const lngs = pts.map((p) => p.lng);
+  const minLa = Math.min(...lats); const maxLa = Math.max(...lats);
+  const minLn = Math.min(...lngs); const maxLn = Math.max(...lngs);
+  const nx = (v) => (maxLn === minLn ? 50 : 6 + ((v - minLn) / (maxLn - minLn)) * 88);
+  const ny = (v) => (maxLa === minLa ? 50 : 6 + ((maxLa - v) / (maxLa - minLa)) * 88);
+  const pins = pts.slice(0, 200).map((p) => `<button class="pin" style="left:${nx(p.lng)}%;top:${ny(p.lat)}%" data-id="${p.id}"></button>`).join('');
+  wrap.innerHTML = `<div class="map-canvas">${pins}</div>`;
   $$('.pin', wrap).forEach((el) => { el.onclick = () => openDetail(el.dataset.id); });
 }
 
@@ -212,9 +256,23 @@ function renderMap() {
 function openDetail(id) {
   const it = state.all.find((x) => x.id === id);
   if (!it) return;
-  const modal = $('#detail');
   const feats = it.features.map((k) => `<span class="chip">${FEATURES[k]}</span>`).join('');
   const fav = state.favorites.has(it.id);
+  const est = estimate(it);
+  const estBlock = est ? `
+    <div class="est-block ${est.verdict}">
+      <div><b>${est.perM2.toLocaleString('fr-FR')} €/m²</b><span>ce bien</span></div>
+      <div><b>${est.refPerM2.toLocaleString('fr-FR')} €/m²</b><span>réf. marché</span></div>
+      <div class="est-verdict">${est.deltaPct > 0 ? '+' : ''}${est.deltaPct}%<span>${est.verdict === 'below' ? 'sous le marché' : est.verdict === 'above' ? 'au-dessus du marché' : 'dans le marché'}</span></div>
+    </div>
+    <p class="est-note">Référence de marché indicative — à brancher sur l'open data DVF pour des valeurs réelles par quartier.</p>` : '';
+
+  const sourcesBlock = (it.sources && it.sources.length > 1) ? `
+    <div class="sources-block">
+      <h4>Disponible sur ${it.sources.length} portails</h4>
+      <ul>${it.sources.map((s) => `<li><span>${escapeHtml(s.source)}</span><b>${formatPrice(s.priceEUR, it.transaction)}</b></li>`).join('')}</ul>
+    </div>` : '';
+
   $('#detailBody').innerHTML = `
     <div class="detail-media"><img src="${propertyImage(it, 900, 520)}" alt="${escapeHtml(it.title)}"/></div>
     <div class="detail-info">
@@ -230,6 +288,7 @@ function openDetail(id) {
         <strong>${formatPrice(it.priceEUR, it.transaction)}</strong>
         <span>${formatPrice(Math.round(it.priceEUR / it.surface), 'buy')}/m²</span>
       </div>
+      ${estBlock}
       <ul class="detail-specs">
         <li><b>${it.surface}</b> m²</li>
         ${it.rooms ? `<li><b>${it.rooms}</b> pièces</li>` : ''}
@@ -239,13 +298,12 @@ function openDetail(id) {
         ${it.year ? `<li>Année <b>${it.year}</b></li>` : ''}
       </ul>
       <div class="chips">${feats}</div>
-      <p class="detail-src">Source : <b>${escapeHtml(it.source)}</b> · publié ${formatDate(it.createdAt)}</p>
-      <a class="btn primary block" href="${it.sourceUrl}" target="_blank" rel="noopener noreferrer">
-        Voir l'annonce sur ${escapeHtml(it.source)}
-      </a>
+      ${sourcesBlock}
+      <p class="detail-src">Source principale : <b>${escapeHtml(it.source)}</b> · publié ${formatDate(it.createdAt)}</p>
+      <a class="btn primary block" href="${it.sourceUrl}" target="_blank" rel="noopener noreferrer">Voir l'annonce sur ${escapeHtml(it.source)}</a>
     </div>`;
   $('#detailFav').onclick = () => { toggleFav(it.id); openDetail(id); };
-  modal.showModal();
+  $('#detail').showModal();
 }
 
 /* ------------------------------------------------------------------ *
@@ -257,6 +315,77 @@ function toggleFav(id) {
   localStorage.setItem('ir.favorites', JSON.stringify([...state.favorites]));
   $('#favCount').textContent = state.favorites.size || '';
   applyFilters();
+}
+
+/* ------------------------------------------------------------------ *
+ *  Alertes
+ * ------------------------------------------------------------------ */
+function matchesForAlert(alert) {
+  return state.all.filter((it) => listingMatches(it, alert.nf, state.favorites)).map((it) => it.id);
+}
+
+function refreshAlertBadge() {
+  let totalNew = 0;
+  for (const a of loadAlerts()) {
+    const seen = new Set(a.seenIds || []);
+    totalNew += matchesForAlert(a).filter((id) => !seen.has(id)).length;
+  }
+  const badge = $('#alertCount');
+  badge.textContent = totalNew || '';
+  badge.classList.toggle('hot', totalNew > 0);
+}
+
+function renderAlerts() {
+  const alerts = loadAlerts();
+  const list = $('#alertList');
+  if (!alerts.length) {
+    list.innerHTML = '<p class="muted">Aucune alerte enregistrée. Réglez vos filtres, puis créez-en une ci-dessus.</p>';
+    return;
+  }
+  list.innerHTML = alerts.map((a) => {
+    const ids = matchesForAlert(a);
+    const seen = new Set(a.seenIds || []);
+    const nb = ids.filter((id) => !seen.has(id)).length;
+    return `<div class="alert-item" data-id="${a.id}">
+      <div class="alert-main">
+        <b>${escapeHtml(a.name)}</b>
+        <span class="alert-desc">${escapeHtml(describeFilters(a.nf))}</span>
+        <span class="alert-meta">${ids.length} bien(s)${nb ? ` · <span class="new">${nb} nouveau(x)</span>` : ''}${a.email ? ` · ${escapeHtml(a.email)}` : ''}</span>
+      </div>
+      <div class="alert-actions">
+        <button class="btn ghost sm" data-act="seen">Marquer vues</button>
+        <button class="btn ghost sm danger" data-act="del">Supprimer</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  $$('.alert-item', list).forEach((el) => {
+    const id = el.dataset.id;
+    el.querySelector('[data-act="del"]').onclick = () => { removeAlert(id); renderAlerts(); refreshAlertBadge(); };
+    el.querySelector('[data-act="seen"]').onclick = () => {
+      const a = loadAlerts().find((x) => x.id === id);
+      updateAlert(id, { seenIds: matchesForAlert(a) });
+      renderAlerts(); refreshAlertBadge();
+    };
+  });
+}
+
+async function createAlertFromFilters() {
+  const nf = normalizeFilters(state.filters);
+  const name = $('#alertName').value.trim() || describeFilters(nf);
+  const email = $('#alertEmail').value.trim();
+  const alert = { id: `al-${Date.now()}`, name, email, nf, createdAt: Date.now(), seenIds: [] };
+  // Les biens présents à la création sont considérés « déjà vus » : seuls les futurs comptent.
+  alert.seenIds = matchesForAlert(alert);
+  addAlert(alert);
+  const delivered = await deliverAlert(alert);
+  $('#alertMsg').textContent = delivered
+    ? "Alerte créée et transmise au service d'e-mail."
+    : "Alerte créée (notifications dans l'app). Envoi e-mail : voir README.";
+  $('#alertName').value = '';
+  $('#alertEmail').value = '';
+  renderAlerts();
+  refreshAlertBadge();
 }
 
 /* ------------------------------------------------------------------ *
@@ -272,12 +401,10 @@ function buildFilterUI() {
   $('#energyFilters').innerHTML = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
     .map((e) => `<label class="pillcheck"><input type="checkbox" data-energy="${e}"><span class="energy e-${e}">${e}</span></label>`).join('');
 
-  const dl = $('#cityList');
-  dl.innerHTML = [...CITY_NAMES, ...COUNTRIES].map((c) => `<option value="${escapeHtml(c)}">`).join('');
+  $('#cityList').innerHTML = [...CITY_NAMES, ...COUNTRIES].map((c) => `<option value="${escapeHtml(c)}">`).join('');
 
   const curSel = $('#currency');
-  curSel.innerHTML = Object.entries(CURRENCIES)
-    .map(([k, v]) => `<option value="${k}">${k} (${v.symbol})</option>`).join('');
+  curSel.innerHTML = Object.entries(CURRENCIES).map(([k, v]) => `<option value="${k}">${k} (${v.symbol})</option>`).join('');
   curSel.value = state.currency;
 }
 
@@ -289,17 +416,14 @@ function wireEvents() {
 
   $('#search').addEventListener('input', debounce((e) => { f.q = e.target.value; applyFilters(); }, 200));
 
-  $$('input[name="transaction"]').forEach((r) => r.addEventListener('change', (e) => {
-    f.transaction = e.target.value; applyFilters();
-  }));
+  $$('input[name="transaction"]').forEach((r) => r.addEventListener('change', (e) => { f.transaction = e.target.value; applyFilters(); }));
 
   bindChecks('[data-type]', 'type', f.types);
   bindChecks('[data-country]', 'country', f.countries);
   bindChecks('[data-feature]', 'feature', f.features);
   bindChecks('[data-energy]', 'energy', f.energy);
 
-  const numeric = { priceMin: 'priceMin', priceMax: 'priceMax', surfaceMin: 'surfaceMin', surfaceMax: 'surfaceMax' };
-  Object.keys(numeric).forEach((id) => {
+  ['priceMin', 'priceMax', 'surfaceMin', 'surfaceMax'].forEach((id) => {
     $('#' + id).addEventListener('input', debounce((e) => {
       const v = e.target.value.trim();
       f[id] = v === '' ? null : Number(v);
@@ -325,21 +449,21 @@ function wireEvents() {
 
   $('#resetBtn').addEventListener('click', resetFilters);
   $('#loadMore').addEventListener('click', () => { state.page++; render(); });
-
-  // Vue grille / liste / carte
   $$('.view-btn').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
-
-  // Thème
   $('#themeBtn').addEventListener('click', toggleTheme);
 
-  // Tiroir filtres (mobile)
   $('#filterToggle').addEventListener('click', () => document.body.classList.add('drawer-open'));
   $('#closeDrawer').addEventListener('click', () => document.body.classList.remove('drawer-open'));
   $('#backdrop').addEventListener('click', () => document.body.classList.remove('drawer-open'));
 
-  // Modale
   $('#detailClose').addEventListener('click', () => $('#detail').close());
   $('#detail').addEventListener('click', (e) => { if (e.target.id === 'detail') $('#detail').close(); });
+
+  // Alertes
+  $('#alertsBtn').addEventListener('click', () => { renderAlerts(); $('#alertMsg').textContent = ''; $('#alerts').showModal(); });
+  $('#alertsClose').addEventListener('click', () => $('#alerts').close());
+  $('#alerts').addEventListener('click', (e) => { if (e.target.id === 'alerts') $('#alerts').close(); });
+  $('#alertCreate').addEventListener('click', createAlertFromFilters);
 }
 
 function bindChecks(sel, attr, set) {
@@ -354,10 +478,9 @@ function setView(view) {
   state.view = view;
   localStorage.setItem('ir.view', view);
   $$('.view-btn').forEach((b) => b.classList.toggle('on', b.dataset.view === view));
-  const map = $('#map');
-  map.hidden = view !== 'map';
+  $('#map').hidden = view !== 'map';
   $('#results').hidden = view === 'map';
-  if (view === 'map') { $('#loadMore').hidden = true; renderMap(); } else render();
+  render();
 }
 
 function resetFilters() {
@@ -372,15 +495,15 @@ function resetFilters() {
 }
 
 function toggleTheme() {
-  const cur = document.documentElement.dataset.theme || 'light';
-  const next = cur === 'light' ? 'dark' : 'light';
+  const next = (document.documentElement.dataset.theme || 'light') === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;
   localStorage.setItem('ir.theme', next);
   $('#themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
 }
 
 function debounce(fn, ms) {
-  let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  let t;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
 /* ------------------------------------------------------------------ *
@@ -399,11 +522,13 @@ async function init() {
 
   $('#results').innerHTML = '<div class="empty-state"><span class="spinner"></span><p>Chargement des annonces…</p></div>';
   try {
-    state.all = await fetchAllListings();
+    const { data } = await getListings(fetchAllListings);
+    state.all = dedupe(data);
   } catch (err) {
     console.error(err);
     state.all = [];
   }
+  refreshAlertBadge();
   applyFilters();
 }
 

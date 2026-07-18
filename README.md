@@ -19,7 +19,11 @@ responsive et riche en filtres.
   terrasse, parking, vue mer…), classe énergie (DPE A→G).
 - **Tri** : plus récents, prix croissant/décroissant, surface, **prix au m²**.
 - **Multi-devises** (€, $, £, CHF, AED) avec conversion à la volée.
-- **3 vues** : grille, liste et **carte** schématique.
+- **3 vues** : grille, liste et **carte interactive** (Leaflet + OpenStreetMap).
+- **Estimateur de prix** : chaque bien est comparé à une référence de marché
+  (« −10 % sous le marché ») — prêt à être alimenté par l'open data DVF.
+- **Alertes / recherches sauvegardées** : soyez notifié des nouveaux biens.
+- **Déduplication** multi-portails : « Vu sur 3 sites » + **cache** client.
 - **Favoris** persistants (stockés dans le navigateur).
 - **Fiche détail** complète en modale.
 - **Responsive** : tiroir de filtres sur mobile, design fluide.
@@ -77,6 +81,53 @@ commentaire en tête de `assets/js/data.js`).
 
 ---
 
+## 🧩 Fonctionnalités avancées
+
+### 🗺️ Carte interactive (Leaflet)
+
+La vue **Carte** utilise [Leaflet](https://leafletjs.com/) (embarqué dans
+`assets/vendor/leaflet/`, aucune dépendance CDN) avec les tuiles gratuites
+**OpenStreetMap**. Chaque bien est un marqueur étiqueté par son prix ; un clic
+ouvre la fiche. Si Leaflet est indisponible (hors ligne), un repli schématique
+prend le relais. Pour des tuiles premium, remplacez l'URL du `tileLayer` dans
+`assets/js/app.js` (Mapbox, MapTiler…).
+
+### 📈 Estimateur de prix (open data DVF)
+
+`assets/js/estimator.js` compare le prix au m² d'un bien à une **référence de
+marché** et affiche l'écart (« −10 % sous le marché »). Les références sont
+actuellement des valeurs de démonstration par ville. **Pour des valeurs
+réelles**, calculez côté back-end des agrégats de l'open data
+**[DVF](https://www.data.gouv.fr/fr/datasets/demandes-de-valeurs-foncieres/)**
+(prix de vente réels) par commune/quartier, exposez-les en JSON, et remplissez
+`MARKET_REF` (ou remplacez `estimate()` par un `fetch`).
+
+### 🔔 Alertes / recherches sauvegardées
+
+`assets/js/alerts.js` enregistre les recherches dans le navigateur et signale
+les nouveaux biens correspondants à chaque visite (badge 🔔). **L'envoi
+d'e-mails réels** nécessite un back-end : définissez
+
+```html
+<script>window.IMMOCONSULT_ALERT_ENDPOINT = 'https://mon-api.example/alertes';</script>
+```
+
+L'app y enverra alors `{ email, name, filters }`. Côté serveur, une fonction
+serverless stocke l'alerte et déclenche l'e-mail via votre fournisseur
+(Resend, SendGrid, Mailgun, Postmark…) sur un cron qui compare aux nouvelles
+annonces.
+
+### 🧬 Déduplication & cache
+
+- `assets/js/dedupe.js` regroupe les annonces qui décrivent le même bien
+  (même type/ville/surface/pièces + prix proche) sur plusieurs portails et les
+  fusionne en une fiche « Vu sur N sites ».
+- `assets/js/cache.js` met en cache les annonces dans le navigateur (TTL
+  10 min) pour éviter de re-solliciter les sources. En production, ce cache se
+  double d'un cache serveur (Redis/KV) devant les API partenaires.
+
+---
+
 ## 🚀 Déploiement sur GitHub Pages
 
 Un workflow (`.github/workflows/deploy.yml`) publie le site automatiquement à
@@ -102,11 +153,17 @@ python3 -m http.server 8000
 ## 🗂️ Structure
 
 ```
-index.html                  Page + structure
-assets/css/styles.css       Design (clair/sombre, responsive)
-assets/js/app.js            Logique : filtres, tri, favoris, rendu, carte
-assets/js/data.js           Schéma + jeu de données de démonstration
-assets/js/sources/          Adaptateurs de sources (registre + démo)
+index.html                    Page + structure
+assets/css/styles.css         Design (clair/sombre, responsive)
+assets/js/app.js              Orchestration : rendu, filtres, carte, alertes…
+assets/js/data.js             Schéma + jeu de données de démonstration
+assets/js/filters.js          Prédicat de filtrage partagé (app + alertes)
+assets/js/estimator.js        Estimation de prix (référence marché / DVF)
+assets/js/dedupe.js           Déduplication multi-portails
+assets/js/cache.js            Cache client des annonces (TTL)
+assets/js/alerts.js           Alertes / recherches sauvegardées
+assets/js/sources/            Adaptateurs de sources (registre + démo)
+assets/vendor/leaflet/        Leaflet embarqué (carte interactive)
 .github/workflows/deploy.yml  Déploiement GitHub Pages
 ```
 
@@ -114,9 +171,10 @@ assets/js/sources/          Adaptateurs de sources (registre + démo)
 
 ## 🧭 Pistes d'évolution
 
-Voir la section « Idées d'amélioration » dans les notes du projet : back-end
-d'agrégation, cache et déduplication des annonces, vraie carte interactive,
-alertes e-mail, estimation de prix, comparateur, i18n, etc.
+Prochaines briques utiles : back-end d'agrégation avec cache serveur et
+respect des quotas, historique des prix, comparateur de biens, calculette de
+crédit, PWA installable + notifications, SEO (données structurées
+`schema.org/RealEstateListing`), i18n multilingue, comptes utilisateurs.
 
 ---
 

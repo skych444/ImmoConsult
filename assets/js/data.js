@@ -158,7 +158,28 @@ function buildListings(count = 48) {
       hue: Math.floor(rng() * 360),
     });
   }
-  return list;
+
+  // Cross-postings : un même bien republié sur d'autres portails (prix et
+  // date légèrement différents). Sert à démontrer la déduplication.
+  const dupes = [];
+  list.forEach((it, idx) => {
+    const rng = mulberry32(50000 + idx * 31);
+    if (rng() >= 0.35) return;
+    const nDup = rng() < 0.35 ? 2 : 1;
+    const others = SOURCES.filter((s) => s !== it.source);
+    for (let k = 0; k < nDup; k++) {
+      const src = others[Math.floor(rng() * others.length)];
+      dupes.push({
+        ...it,
+        id: `${it.id}-x${k + 1}`,
+        source: src,
+        sourceUrl: '#',
+        priceEUR: Math.round(it.priceEUR * (0.98 + rng() * 0.04)),
+        createdAt: new Date(Date.now() - Math.floor(rng() * 60) * 86400000).toISOString(),
+      });
+    }
+  });
+  return [...list, ...dupes];
 }
 
 export const DEMO_LISTINGS = buildListings(48);

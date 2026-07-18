@@ -263,4 +263,71 @@ select, input { font: inherit; color: var(--text); }
   .topbar-search { order: 3; flex-basis: 100%; max-width: none; }
   .brand h1 { font-size: 1rem; }
   .detail-specs { grid-template-columns: repeat(2, 1fr); }
+  .alert-item { flex-direction: column; align-items: flex-start; }
 }
+
+/* ============================================================= *
+ *  Carte Leaflet
+ * ============================================================= */
+#map { height: 62vh; min-height: 380px; }
+.leaflet-container { font: inherit; background: var(--surface-2); }
+.ir-pin-wrap { background: none; border: none; }
+.ir-pin {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 3px 8px; border-radius: 999px; font-size: .72rem; font-weight: 700;
+  color: #fff; background: var(--buy); border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.35); white-space: nowrap; cursor: pointer;
+}
+.ir-pin.rent { background: var(--rent); }
+
+/* ============================================================= *
+ *  Estimation de prix (DVF)
+ * ============================================================= */
+.est { display: inline-block; align-self: flex-start; font-size: .74rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.est.below { background: color-mix(in srgb, var(--buy) 18%, transparent); color: var(--buy); }
+.est.above { background: color-mix(in srgb, #dc2626 18%, transparent); color: #dc2626; }
+.est.fair  { background: var(--surface-2); color: var(--muted); }
+.est-block {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: center;
+  padding: 14px; border-radius: var(--radius-sm); margin: 0 0 8px;
+  background: var(--surface-2); border-left: 4px solid var(--muted);
+}
+.est-block.below { border-left-color: var(--buy); }
+.est-block.above { border-left-color: #dc2626; }
+.est-block b { display: block; font-size: 1.05rem; }
+.est-block span { font-size: .72rem; color: var(--muted); }
+.est-verdict { text-align: right; font-size: 1.25rem; font-weight: 800; }
+.est-block.below .est-verdict { color: var(--buy); }
+.est-block.above .est-verdict { color: #dc2626; }
+.est-note { font-size: .74rem; color: var(--muted); margin: 0 0 14px; }
+
+/* ============================================================= *
+ *  Multi-sources (déduplication)
+ * ============================================================= */
+.source-tag.multi { background: var(--primary); }
+.sources-block { background: var(--surface-2); border-radius: var(--radius-sm); padding: 12px 14px; margin: 0 0 14px; }
+.sources-block h4 { margin: 0 0 8px; font-size: .82rem; }
+.sources-block ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sources-block li { display: flex; justify-content: space-between; font-size: .88rem; }
+
+/* ============================================================= *
+ *  Alertes (modale)
+ * ============================================================= */
+.modal { width: min(560px, 94vw); max-height: 90vh; padding: 0; border: none; border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); overflow: hidden; }
+.modal::backdrop { background: rgba(4,6,16,.6); backdrop-filter: blur(3px); }
+.modal-body { padding: 26px; overflow-y: auto; max-height: 90vh; }
+.modal-body h2 { margin-bottom: 8px; }
+.muted { color: var(--muted); font-size: .86rem; }
+.alert-form { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 6px; }
+.alert-form input { padding: 11px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); }
+.alert-msg { min-height: 18px; font-size: .82rem; color: var(--buy); margin: 6px 0 0; }
+.alert-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.alert-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.alert-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.alert-desc { font-size: .8rem; color: var(--muted); }
+.alert-meta { font-size: .74rem; color: var(--muted); }
+.alert-meta .new { color: var(--buy); font-weight: 700; }
+.alert-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.btn.sm { padding: 6px 10px; font-size: .78rem; }
+.btn.danger:hover { border-color: #dc2626; color: #dc2626; }
+.count.hot { color: #fff; background: #dc2626; border-radius: 999px; padding: 0 6px; }
