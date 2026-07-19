@@ -1,17 +1,19 @@
 import {
   CURRENCIES, PROPERTY_TYPES, FEATURES, COUNTRIES, CITY_NAMES, CITY_COORDS,
 } from './data.js';
-import { fetchAllListings } from './sources/index.js';
-import { getListings } from './cache.js';
+import { loadCatalog } from './sources/index.js';
+import { dvfByCenter } from './sources/dvf.js';
+import { getListings, clearCache } from './cache.js';
 import { dedupe } from './dedupe.js';
-import { estimate } from './estimator.js';
+import { estimate, computeMarketRefs, setMarketRefs } from './estimator.js';
 import { listingMatches, describeFilters } from './filters.js';
 import { loadAlerts, addAlert, removeAlert, updateAlert, deliverAlert } from './alerts.js';
 import { enrich } from './insights.js';
 import { parseQuery } from './search-nlp.js';
 import { MODES, matchesCommute, travelMinutes } from './commute.js';
 import { computeCost, CREDIT_DEFAULTS } from './cost.js';
-import { RISK_LEVEL_TXT } from './risks.js';
+import { RISK_LEVEL_TXT, fetchRealRisks } from './risks.js';
+import { geocodeCommune } from './geo.js';
 
 /* ------------------------------------------------------------------ *
  *  État
@@ -189,11 +191,16 @@ function render() {
 
 function cardBadges(it) {
   const ix = it.ix; const b = [];
-  if (ix.negotiation.level !== 'low') b.push(`<span class="mb nego">négociable −${ix.negotiation.margin}%</span>`);
-  if (ix.anomaly.level !== 'ok') b.push(`<span class="mb ${ix.anomaly.level === 'danger' ? 'danger' : 'warn'}">⚠ à vérifier</span>`);
+  if (it.realData) b.push('<span class="mb real">réel DVF</span>');
+  if (!it.realData && ix.negotiation.level !== 'low') b.push(`<span class="mb nego">négociable −${ix.negotiation.margin}%</span>`);
+  if (!it.realData && ix.anomaly.level !== 'ok') b.push(`<span class="mb ${ix.anomaly.level === 'danger' ? 'danger' : 'warn'}">⚠ à vérifier</span>`);
   if (ix.dpeBan) b.push(`<span class="mb ${ix.dpeBan.active ? 'danger' : 'warn'}">DPE ${ix.dpeBan.year}</span>`);
   if (it.transaction === 'buy' && ix.invest) b.push(`<span class="mb yield">${ix.invest.grossYield}% brut</span>`);
   return b.length ? `<div class="mbadges">${b.join('')}</div>` : '';
+}
+
+function frDate(iso) {
+  try { return new Date(iso).toLocaleDateString('fr-FR'); } catch { return ''; }
 }
 
 function livabilityDot(it) {
@@ -238,7 +245,7 @@ function cardHtml(it) {
         <li class="ppm2">${money(Math.round(it.priceEUR / it.surface), '/m²')}</li>
       </ul>
       <div class="chips">${feats}</div>
-      <p class="card-foot"><span>${escapeHtml(it.source)}</span> · ${formatDate(it.createdAt)}</p>
+      <p class="card-foot"><span>${escapeHtml(it.source)}</span> · ${it.realData && it.saleDate ? `vendu le ${frDate(it.saleDate)}` : formatDate(it.createdAt)}</p>
     </div>
   </article>`;
 }
@@ -346,7 +353,8 @@ function detailSectionsHtml(it) {
   const hazHtml = Object.entries(r.hazards).map(([k, v]) => `<span class="haz l${v}">${r.labels[k]} : ${RISK_LEVEL_TXT[v]}</span>`).join('');
   const riskHtml = `
     <div class="liv-big ${r.livability >= 70 ? 'good' : r.livability >= 45 ? 'mid' : 'bad'}"><b>${r.livability}</b><span>/100 qualité de vie</span></div>
-    <div class="haz-row">${hazHtml}</div>
+    <div class="haz-row" id="hazRow">${hazHtml}</div>
+    <p class="muted small" id="riskSrc">${it.country === 'France' ? 'Risques : interrogation de Géorisques…' : 'Risques estimés'} · confort estimé</p>
     ${bar('Air', r.quality.air)}
     ${bar('Calme', 100 - r.quality.noise)}
     ${bar('Écoles', r.quality.schools)}
@@ -377,19 +385,22 @@ function detailSectionsHtml(it) {
   const ban = ix.dpeBan;
   const banHtml = ban ? `<p class="flag ${ban.active ? 'danger' : 'warn'}">⚖️ ${ban.label}</p>` : '';
   const anom = ix.anomaly;
-  const anomHtml = anom.level !== 'ok' ? `<div class="flag ${anom.level === 'danger' ? 'danger' : 'warn'}">⚠ ${anom.reasons.join(' · ')}</div>` : '';
+  const anomHtml = (!it.realData && anom.level !== 'ok') ? `<div class="flag ${anom.level === 'danger' ? 'danger' : 'warn'}">⚠ ${anom.reasons.join(' · ')}</div>` : '';
+
+  const realHead = it.realData
+    ? `<p class="flag ok">✅ Transaction réelle DVF${it.saleDate ? ` — vendue le ${frDate(it.saleDate)}` : ''}. Les blocs marqués « estimé » sont modélisés (le DVF ne contient ni DPE ni copropriété).</p>`
+    : '';
 
   const note = state.notes[it.id] || '';
-
   const sec = (title, body, open = false) => body ? `<details class="ix-sec" ${open ? 'open' : ''}><summary>${title}</summary><div class="ix-body">${body}</div></details>` : '';
 
   return `
-    ${banHtml}${anomHtml}
-    ${sec('💶 Coût réel & crédit', costSection(it), true)}
-    ${sec('🤝 Négociation', negoHtml)}
+    ${realHead}${banHtml}${anomHtml}
+    ${sec('💶 Coût réel & crédit' + (it.realData ? ' (estimé)' : ''), costSection(it), true)}
+    ${it.realData ? '' : sec('🤝 Négociation', negoHtml)}
     ${sec('🌿 Risques & qualité de vie', riskHtml)}
-    ${it.transaction === 'buy' ? sec('📈 Investissement locatif', investHtml) : ''}
-    ${co ? sec('🏢 Copropriété', coproHtml) : ''}
+    ${it.transaction === 'buy' ? sec('📈 Investissement locatif' + (it.realData ? ' (estimé)' : ''), investHtml) : ''}
+    ${(co && !it.realData) ? sec('🏢 Copropriété', coproHtml) : ''}
     <details class="ix-sec"><summary>📝 Mes notes</summary><div class="ix-body">
       <textarea id="noteBox" class="note-box" placeholder="Vos impressions après visite…">${escapeHtml(note)}</textarea>
     </div></details>`;
@@ -441,6 +452,20 @@ function openDetail(id) {
   const nb = $('#noteBox');
   if (nb) nb.oninput = debounce(() => { state.notes[it.id] = nb.value; localStorage.setItem('ir.notes', JSON.stringify(state.notes)); }, 300);
   $('#detail').showModal();
+
+  // Enrichissement asynchrone : vrais risques Géorisques (France).
+  if (it.country === 'France') {
+    fetchRealRisks(it.lat, it.lng).then((real) => {
+      if (!real || _detailId !== id) return;
+      const row = $('#hazRow');
+      if (row) row.innerHTML = Object.entries(real.hazards).map(([k, v]) => `<span class="haz l${v}">${real.labels[k]} : ${RISK_LEVEL_TXT[v]}</span>`).join('');
+      const src = $('#riskSrc');
+      if (src) src.innerHTML = '✅ Risques : <b>Géorisques (réel)</b> · confort estimé';
+    }).catch(() => {
+      const src = $('#riskSrc');
+      if (src) src.textContent = 'Risques estimés (Géorisques injoignable) · confort estimé';
+    });
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -609,6 +634,8 @@ function wireEvents() {
   $('#compare').addEventListener('click', (e) => { if (e.target.id === 'compare') $('#compare').close(); });
   // Temps de trajet
   $('#commuteAdd').addEventListener('click', addCommutePoint);
+  // Chargement d'une commune réelle (DVF)
+  $('#communeForm').addEventListener('submit', (e) => { e.preventDefault(); loadCommune($('#communeInput').value); });
 }
 function bindChecks(sel, attr, set) {
   $$(sel).forEach((el) => el.addEventListener('change', (e) => { const v = e.target.dataset[attr]; if (e.target.checked) set.add(v); else set.delete(v); applyFilters(); }));
@@ -642,12 +669,55 @@ async function init() {
   if (savedTheme) { document.documentElement.dataset.theme = savedTheme; $('#themeBtn').textContent = savedTheme === 'dark' ? '☀️' : '🌙'; }
   buildFilterUI(); wireEvents(); setView(state.view);
   $('#favCount').textContent = state.favorites.size || '';
-  $('#results').innerHTML = '<div class="empty-state"><span class="spinner"></span><p>Chargement des annonces…</p></div>';
+  $('#results').innerHTML = '<div class="empty-state"><span class="spinner"></span><p>Chargement des données réelles (DVF)…</p></div>';
   try {
-    const { data } = await getListings(fetchAllListings);
-    state.all = dedupe(data).map(enrich);
-  } catch (err) { console.error(err); state.all = []; }
+    const { data } = await getListings(async () => (await loadCatalog()).listings);
+    ingest(data);
+    state.mode = state.all.some((x) => x.realData) ? 'real' : 'demo';
+  } catch (err) { console.error(err); state.all = []; state.mode = 'demo'; }
+  updateDataBanner();
   refreshAlertBadge(); applyFilters();
+}
+
+/** Déduplique, calcule les références marché réelles, puis enrichit. */
+function ingest(listings) {
+  const deduped = dedupe(listings);
+  setMarketRefs(computeMarketRefs(deduped));
+  state.all = deduped.map(enrich);
+}
+
+function updateDataBanner(extra) {
+  const el = $('#dataBanner');
+  if (!el) return;
+  if (state.mode === 'real') {
+    el.className = 'data-banner ok';
+    el.innerHTML = `✅ <b>Données réelles DVF</b> · ${extra || `${state.all.length} transactions (data.gouv.fr)`}`;
+  } else {
+    el.className = 'data-banner warn';
+    el.innerHTML = `⚠️ API réelle injoignable (CORS/proxy requis) — <b>affichage démonstration</b>. Voir le README.`;
+  }
+}
+
+async function loadCommune(q) {
+  if (!q.trim()) return;
+  const el = $('#dataBanner');
+  el.className = 'data-banner';
+  el.innerHTML = `<span class="spinner tiny"></span> Chargement DVF pour « ${escapeHtml(q)} »…`;
+  try {
+    const c = await geocodeCommune(q);
+    if (!c) { el.className = 'data-banner warn'; el.textContent = 'Commune introuvable.'; return; }
+    const listings = await dvfByCenter(c, 1200, 250);
+    if (!listings.length) { el.className = 'data-banner warn'; el.textContent = `Aucune transaction DVF trouvée à ${c.label}.`; return; }
+    clearCache();
+    ingest(listings);
+    state.mode = 'real';
+    state.commute = []; renderCommute();
+    updateDataBanner(`${c.label} · ${state.all.length} transactions`);
+    refreshAlertBadge(); applyFilters();
+  } catch (err) {
+    el.className = 'data-banner warn';
+    el.innerHTML = `⚠️ API DVF/BAN injoignable (probable CORS) — ${escapeHtml(err.message)}. Un proxy est nécessaire (voir README).`;
+  }
 }
 
 init();

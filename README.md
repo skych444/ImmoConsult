@@ -71,8 +71,34 @@ techniquement. Ce projet est donc conçu pour ne consommer que des sources
 | **Open data** | En France, **DVF** (Demandes de Valeurs Foncières, [data.gouv.fr](https://www.data.gouv.fr/)) donne les **prix de vente réels**. À l'international : registres cadastraux ouverts. |
 | **Vos propres mandats** | Si vous êtes agence/réseau, vos annonces vous appartiennent. |
 
-Le jeu de données livré est **entièrement fictif** et sert uniquement de
-démonstration visuelle.
+## 🌐 Données réelles branchées (DVF · BAN · Géorisques)
+
+Le site tente d'abord de charger de **vraies données**, gratuites et sans clé :
+
+| Donnée réelle | Source | Module |
+| --- | --- | --- |
+| **Transactions** (prix, surface, pièces, date, adresse) | **DVF** via `api.cquest.org/dvf` | `sources/dvf.js` |
+| **Référence de marché** (€/m² médian par ville) | calculée sur les transactions DVF chargées | `estimator.js` |
+| **Géocodage de commune** | **BAN** (`api-adresse.data.gouv.fr`) | `geo.js` |
+| **Risques** (inondation, argiles, radon, sismique…) | **Géorisques** (`georisques.gouv.fr`) | `risks.js` |
+
+- Au démarrage, quelques communes réelles sont chargées ; la barre
+  **« Charger une commune »** permet d'afficher les transactions réelles de
+  n'importe quelle ville française.
+- Les risques Géorisques sont récupérés **à l'ouverture d'une fiche** (France).
+- ⚠️ Ce sont des **ventes réalisées** (pas des annonces en cours) et la
+  couverture est **française**.
+
+> **CORS / proxy.** Ces API sont appelées **depuis le navigateur**. Si l'une
+> d'elles n'autorise pas les requêtes cross-origin (ou est momentanément
+> indisponible), l'application **bascule automatiquement en mode
+> démonstration** et l'affiche dans un bandeau. Pour fiabiliser, placez un
+> petit **proxy serverless** (Cloudflare Worker / Vercel Function) devant ces
+> API et pointez `DVF`, `BAN` et l'URL Géorisques dessus. Les analyses sans
+> source ouverte gratuite (négociation, copropriété) sont **masquées** sur les
+> données réelles ; les blocs restants sont marqués « estimé ».
+
+Le jeu de données de **démonstration** (fictif) reste disponible en repli.
 
 ---
 
@@ -216,7 +242,9 @@ assets/js/invest.js           Rendement locatif & timing marché
 assets/js/anomaly.js          Détecteur d'anomalies / arnaques
 assets/js/commute.js          Recherche par temps de trajet (isochrones)
 assets/js/search-nlp.js       Recherche en langage naturel
+assets/js/geo.js              Géocodage réel (BAN)
 assets/js/util.js             Utilitaires (hash, RNG, crédit, distance)
+assets/js/sources/dvf.js      Source RÉELLE : transactions DVF
 assets/js/sources/            Adaptateurs de sources (registre + démo)
 assets/vendor/leaflet/        Leaflet embarqué (carte interactive)
 .github/workflows/deploy.yml  Déploiement GitHub Pages

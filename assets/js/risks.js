@@ -48,3 +48,40 @@ export function risks(listing) {
 }
 
 export const RISK_LEVEL_TXT = ['nul', 'faible', 'moyen', 'fort'];
+
+/* ------------------------------------------------------------------ *
+ *  Risques RÉELS via l'API Géorisques (gratuite, sans clé).
+ *  https://georisques.gouv.fr/  — France uniquement.
+ *  Renvoie { hazards, real:true } ou null si indisponible (CORS/erreur).
+ * ------------------------------------------------------------------ */
+const _riskCache = new Map();
+
+export async function fetchRealRisks(lat, lng) {
+  const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+  if (_riskCache.has(key)) return _riskCache.get(key);
+  let result = null;
+  try {
+    const url = `https://georisques.gouv.fr/api/v1/gaspar/risques?rayon=1000&latlon=${lng},${lat}`;
+    const res = await fetch(url);
+    if (res.ok) result = parseGeorisques(await res.json());
+  } catch { /* CORS ou réseau : on gardera l'estimation */ }
+  _riskCache.set(key, result);
+  return result;
+}
+
+/** Analyse tolérante : détecte la présence de familles de risques. */
+function parseGeorisques(json) {
+  const s = JSON.stringify(json).toLowerCase();
+  const has = (...w) => w.some((x) => s.includes(x));
+  return {
+    real: true,
+    hazards: {
+      flood: has('inondation') ? 2 : 0,
+      clay: has('argile', 'mouvement de terrain') ? 2 : 0,
+      radon: has('radon') ? 2 : 0,
+      seismic: has('sismi') ? 2 : 0,
+      pollution: has('pollu', 'industriel', 'icpe') ? 1 : 0,
+    },
+    labels: RISK_LABELS,
+  };
+}

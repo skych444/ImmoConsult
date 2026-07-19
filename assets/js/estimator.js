@@ -14,18 +14,40 @@ export const MARKET_REF = {
   'Dubaï': 4800,
 };
 
+// Références calculées dynamiquement sur les vraies transactions chargées.
+let DYNAMIC_REF = {};
+export function setMarketRefs(map) { DYNAMIC_REF = map || {}; }
+
+/** Médiane du €/m² par ville, calculée sur les biens réels (DVF). */
+export function computeMarketRefs(listings) {
+  const acc = {};
+  for (const it of listings) {
+    if (it.transaction !== 'buy' || !it.surface) continue;
+    (acc[it.city] || (acc[it.city] = [])).push(it.priceEUR / it.surface);
+  }
+  const ref = {};
+  for (const [city, arr] of Object.entries(acc)) {
+    if (arr.length < 3) continue; // pas assez de points pour une médiane fiable
+    arr.sort((a, b) => a - b);
+    ref[city] = Math.round(arr[Math.floor(arr.length / 2)]);
+  }
+  return ref;
+}
+
 /**
  * Renvoie l'estimation d'un bien à l'achat, ou null si non estimable.
- * { refPerM2, perM2, deltaPct, verdict: 'below'|'fair'|'above' }
+ * Utilise en priorité la référence réelle (DVF) de la ville, sinon le barème.
+ * { refPerM2, perM2, deltaPct, verdict, real }
  */
 export function estimate(listing) {
   if (listing.transaction !== 'buy' || !listing.surface) return null;
-  const ref = MARKET_REF[listing.city];
+  const dyn = DYNAMIC_REF[listing.city];
+  const ref = dyn || MARKET_REF[listing.city];
   if (!ref) return null;
   const perM2 = listing.priceEUR / listing.surface;
   const deltaPct = Math.round(((perM2 - ref) / ref) * 100);
   let verdict = 'fair';
   if (deltaPct <= -7) verdict = 'below';
   else if (deltaPct >= 7) verdict = 'above';
-  return { refPerM2: ref, perM2: Math.round(perM2), deltaPct, verdict };
+  return { refPerM2: ref, perM2: Math.round(perM2), deltaPct, verdict, real: !!dyn };
 }
